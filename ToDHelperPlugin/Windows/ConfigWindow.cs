@@ -89,11 +89,14 @@ public class ConfigWindow : Window, IDisposable
                 {
                     ImGui.Spacing();
                     ImGui.Text("Watched Channels (for /dice):");
+                    var ws = configuration.WatchSay;
                     var wp = configuration.WatchParty;
                     var wa = configuration.WatchAlliance;
                     var wf = configuration.WatchFC;
                     var wo = configuration.WatchOthers;
 
+                    if (ImGui.Checkbox("Say", ref ws)) { configuration.WatchSay = ws; configuration.Save(); }
+                    ImGui.SameLine();
                     if (ImGui.Checkbox("Party", ref wp)) { configuration.WatchParty = wp; configuration.Save(); }
                     ImGui.SameLine();
                     if (ImGui.Checkbox("Alliance", ref wa)) { configuration.WatchAlliance = wa; configuration.Save(); }

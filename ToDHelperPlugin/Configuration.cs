@@ -15,6 +15,7 @@ public class Configuration : IPluginConfiguration
     // 0 = /random, 1 = /dice
     public int RollMode { get; set; } = 0;
 
+    public bool WatchSay { get; set; } = true;
     public bool WatchParty { get; set; } = true;
     public bool WatchAlliance { get; set; } = true;
     public bool WatchFC { get; set; } = true;

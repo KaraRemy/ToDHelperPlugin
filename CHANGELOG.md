@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.2] - 2026-10-11
+
+### Fixed
+- **/dice Mode Detection**: Added parsing for in-channel `/dice` messages (`Random! 🎲<number>`), resolving roller identities directly from message senders and player payloads.
+- **Name Bracket Normalization**: Trimmed outer brackets from sender names before separator splitting, preventing chat-formatted names like `<Player Name>` from producing empty names.
+
+### Added
+- **Say Channel Watching**: Added Say channel monitoring support (`WatchSay`) with a configuration toggle under watched channels for `/dice`.
+
+---
+
 ## [0.0.1.1] - 2026-09-16
 
 ### Changed

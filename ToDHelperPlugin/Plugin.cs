@@ -3,6 +3,7 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using System;
 using System.IO;
+using System.Linq;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using ToDHelperPlugin.Windows;
@@ -180,7 +181,7 @@ public sealed class Plugin : IDalamudPlugin
         var msg = message.Message;
 
         // Mode 0: /random. FFXIV usually sends standard /random rolls as XivChatType.Standard or SystemMessage.
-        // Mode 1: /dice. We have to filter by the user's selected channels.
+        // Mode 1: /dice. We filter by the user's selected channels.
         
         if (Configuration.RollMode == 0)
         {
@@ -190,7 +191,8 @@ public sealed class Plugin : IDalamudPlugin
         {
             // For /dice, we check if the channel matches the allowed ones.
             bool allowed = false;
-            if (Configuration.WatchParty && type == XivChatType.Party) allowed = true;
+            if (Configuration.WatchSay && type == XivChatType.Say) allowed = true;
+            if (Configuration.WatchParty && (type == XivChatType.Party || type == XivChatType.CrossParty)) allowed = true;
             if (Configuration.WatchAlliance && type == XivChatType.Alliance) allowed = true;
             if (Configuration.WatchFC && type == XivChatType.FreeCompany) allowed = true;
             if (Configuration.WatchOthers)
@@ -203,20 +205,26 @@ public sealed class Plugin : IDalamudPlugin
             if (!allowed) return;
         }
 
-        // Parse standard roll text like "You roll a 59 (out of 100)." or "Player Name rolls a 59 (out of 100)."
-        // Parse standard roll text like "Random! You roll a 🎲777." or "Random! Player Name rolls a 🎲59."
-        var match = System.Text.RegularExpressions.Regex.Match(msg.TextValue, @"(?:Random!\s+)?(?:(?<name>.+?)\s+rolls?|You roll)\s+a\s+[^\d]*(?<roll>\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success)
+        string localWorld = "";
+        if (ObjectTable.LocalPlayer != null)
         {
-            string localWorld = "";
-            if (ObjectTable.LocalPlayer != null)
-            {
-                localWorld = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
-            }
+            localWorld = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
+        }
+
+        // 1. Check for standard /random roll text:
+        // E.g. "You roll a 59 (out of 100)." or "Player Name rolls a 59 (out of 100)."
+        // or "Random! You roll a 🎲777." or "Random! Player Name rolls a 🎲59."
+        var randomMatch = System.Text.RegularExpressions.Regex.Match(
+            msg.TextValue, 
+            @"(?:Random!\s+)?(?:(?<name>.+?)\s+rolls?|You roll)\s+a\s+[^\d]*(?<roll>\d+)", 
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (randomMatch.Success)
+        {
             string playerName;
-            if (match.Groups["name"].Success)
+            if (randomMatch.Groups["name"].Success)
             {
-                playerName = match.Groups["name"].Value;
+                playerName = randomMatch.Groups["name"].Value;
             }
             else
             {
@@ -235,7 +243,51 @@ public sealed class Plugin : IDalamudPlugin
 
             playerName = NormalizePlayerName(playerName, localWorld);
 
-            if (int.TryParse(match.Groups["roll"].Value, out int parsedRoll))
+            if (int.TryParse(randomMatch.Groups["roll"].Value, out int parsedRoll))
+            {
+                GameState.AddRoll(playerName, parsedRoll);
+            }
+            return;
+        }
+
+        // 2. Check for /dice roll text:
+        // In /dice, the game outputs to chat e.g. "Random! 🎲581" with auto-translate arrows (Random! 🎲581 )
+        // and the player name is the sender of the chat message.
+        var diceMatch = System.Text.RegularExpressions.Regex.Match(
+            msg.TextValue, 
+            @"(?:Random!|Zufallswert!|Au sort\s*!|Aléatoire\s*!|ランダム！|[^\w\d]*Random![^\w\d]*)\s*[^\d]*(?<roll>\d+)", 
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (diceMatch.Success)
+        {
+            string playerName = string.Empty;
+
+            // Try PlayerPayload first if available in sender payloads
+            if (sender != null && sender.Payloads != null)
+            {
+                var playerPayload = sender.Payloads.OfType<Dalamud.Game.Text.SeStringHandling.Payloads.PlayerPayload>().FirstOrDefault();
+                if (playerPayload != null)
+                {
+                    var pWorld = playerPayload.World.Value.Name.ToString();
+                    playerName = !string.IsNullOrEmpty(pWorld) ? $"{playerPayload.PlayerName}@{pWorld}" : playerPayload.PlayerName;
+                }
+            }
+
+            // Fallback to sender.TextValue
+            if (string.IsNullOrEmpty(playerName) && sender != null)
+            {
+                playerName = sender.TextValue;
+            }
+
+            // Fallback: If sender was somehow empty, try local player
+            if (string.IsNullOrEmpty(playerName))
+            {
+                playerName = ObjectTable.LocalPlayer?.Name.TextValue ?? ObjectTable[0]?.Name.TextValue ?? "You";
+            }
+
+            playerName = NormalizePlayerName(playerName, localWorld);
+
+            if (int.TryParse(diceMatch.Groups["roll"].Value, out int parsedRoll))
             {
                 GameState.AddRoll(playerName, parsedRoll);
             }
@@ -281,6 +333,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (string.IsNullOrEmpty(fullName)) return string.Empty;
 
+        fullName = fullName.Trim('<', '>', '[', ']', '(', ')', ' ');
+
         // 1. Split by standard separators
         char[] separators = new char[] { '@', '¤', '(', '[', '<' };
         var clean = fullName;
@@ -313,6 +367,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (string.IsNullOrEmpty(fullName)) return string.Empty;
         if (fullName.Equals("You", StringComparison.OrdinalIgnoreCase)) return fullName;
+
+        fullName = fullName.Trim('<', '>', '[', ']', '(', ')', ' ');
 
         char[] separators = new char[] { '@', '¤', '(', '[', '<' };
         foreach (var sep in separators)
